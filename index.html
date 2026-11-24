@@ -10,7 +10,6 @@
             --card-bg: rgba(255, 255, 255, 0.08);
             --card-border: rgba(255, 255, 255, 0.16);
             --accent: #6366f1;
-            --accent-hover: #4f46e5;
             --success: #10b981;
             --danger: #ef4444;
             --warning: #f59e0b;
@@ -383,11 +382,11 @@
 
     <div class="container" id="mainCard">
         <div class="badge">7-Б Клас • Таємний вибір</div>
-        
+
         <div id="stepLogin">
             <h1>Хто ти?</h1>
             <p class="subtitle">Введи своє <b>Прізвище та Ім'я</b> точно як у класному журналі. Після входу змінити ім'я буде неможливо.</p>
-            
+
             <div class="error-msg" id="loginError"></div>
 
             <div class="input-group">
@@ -395,13 +394,13 @@
                 <input type="text" id="userNameInput" placeholder="Наприклад: Лейко Устим" autocomplete="off">
             </div>
 
-            <button class="btn" onclick="registerUser()">Продовжити</button>
+            <button class="btn" id="loginBtn" onclick="registerUser()">Продовжити</button>
         </div>
 
         <div id="stepSpin" class="hidden">
             <h1 id="welcomeName">Привіт!</h1>
             <p class="subtitle">Твоє ім'я зафіксовано. Натисни на кнопку нижче <b>лише один раз</b>, щоб дізнатися, хто тобі випав.</p>
-            
+
             <div class="tap-circle" onclick="performDraw()">
                 <span>НАТИСНИ</span>
                 <small>1 спроба</small>
@@ -441,14 +440,14 @@
         <div class="admin-header">
             <div>
                 <h2 style="font-size: 20px; color: #fff;">Результати 7-Б класу</h2>
-                <small style="color: #94a3b8;">Повна таблиця розподілу (видима лише адміну)</small>
+                <small style="color: #94a3b8;">Спільна база по всіх пристроях (видима лише адміну)</small>
             </div>
             <button class="btn-small btn-close" onclick="closeAdminPanel()">Закрити</button>
         </div>
 
         <div class="test-box-admin">
             <div style="font-size: 13px; color: #fde68a; max-width: 420px;">
-                <b>Режим тестування:</b> дозволяє заходити під будь-якими іменами без блокування пристрою, щоб перевірити відсутність повторів.
+                <b>Режим тестування:</b> дозволяє заходити під будь-якими іменами на цьому пристрої без блокування, щоб перевірити розподіл.
             </div>
             <button class="btn-small btn-warn" id="toggleTestBtn" onclick="toggleTestMode()">Увімкнути тест</button>
         </div>
@@ -480,6 +479,13 @@
     </div>
 
     <script>
+        const FIREBASE_PROJECT_URL = "https://console.firebase.google.com/project/lyzeum7b-santa/overview";
+        const CANDIDATE_DB_URLS = [
+            "https://lyzeum7b-santa-default-rtdb.firebaseio.com",
+            "https://lyzeum7b-santa-default-rtdb.europe-west1.firebasedatabase.app"
+        ];
+        let activeDbBaseUrl = localStorage.getItem("class7b_resolved_db_url_v1") || CANDIDATE_DB_URLS[0];
+
         const STUDENTS = [
             "Бабляк Олександр",
             "Баланчук Соломія",
@@ -517,10 +523,49 @@
             "Черкасова Єва"
         ];
 
-        const STORAGE_STATE_KEY = "class7b_draw_state_v3";
-        const STORAGE_DEVICE_USER_KEY = "class7b_device_locked_user_v3";
-        const STORAGE_TEST_MODE_KEY = "class7b_admin_test_mode_v3";
-        const STORAGE_ADMIN_HASH_KEY = "class7b_admin_key_digest_v3";
+        const STORAGE_DEVICE_USER_KEY = "class7b_device_locked_user_fb_v1";
+        const STORAGE_TEST_MODE_KEY = "class7b_admin_test_mode_fb_v1";
+
+        function buildEndpoint(baseUrl, path) {
+            return `${baseUrl.replace(/\/+$/, "")}/${path}.json`;
+        }
+
+        async function requestWithFallback(method, path, bodyData) {
+            const order = [activeDbBaseUrl, ...CANDIDATE_DB_URLS.filter(u => u !== activeDbBaseUrl)];
+            let lastError = null;
+
+            for (const candidate of order) {
+                try {
+                    const options = { method };
+                    if (bodyData !== undefined) {
+                        options.headers = { "Content-Type": "application/json" };
+                        options.body = JSON.stringify(bodyData);
+                    }
+                    const res = await fetch(buildEndpoint(candidate, path), options);
+                    if (res.ok) {
+                        activeDbBaseUrl = candidate;
+                        localStorage.setItem("class7b_resolved_db_url_v1", candidate);
+                        return method === "DELETE" ? null : await res.json();
+                    }
+                    lastError = new Error(`HTTP ${res.status}`);
+                } catch (err) {
+                    lastError = err;
+                }
+            }
+            throw lastError || new Error("Не вдалося підключитися до бази даних");
+        }
+
+        async function dbGet(path) {
+            return await requestWithFallback("GET", path);
+        }
+
+        async function dbPut(path, data) {
+            return await requestWithFallback("PUT", path, data);
+        }
+
+        async function dbDelete(path) {
+            return await requestWithFallback("DELETE", path);
+        }
 
         function isTestMode() {
             return localStorage.getItem(STORAGE_TEST_MODE_KEY) === "true";
@@ -545,29 +590,6 @@
             }
         }
 
-        function getGameState() {
-            const raw = localStorage.getItem(STORAGE_STATE_KEY);
-            if (raw) {
-                return JSON.parse(raw);
-            }
-            const shuffled = generateDerangement([...STUDENTS]);
-            const mapping = {};
-            STUDENTS.forEach((student, idx) => {
-                mapping[student] = shuffled[idx];
-            });
-
-            const initialState = {
-                mapping: mapping,
-                completed: {}
-            };
-            localStorage.setItem(STORAGE_STATE_KEY, JSON.stringify(initialState));
-            return initialState;
-        }
-
-        function saveGameState(state) {
-            localStorage.setItem(STORAGE_STATE_KEY, JSON.stringify(state));
-        }
-
         function generateDerangement(arr) {
             let result = [...arr];
             let valid = false;
@@ -587,6 +609,26 @@
             return result;
         }
 
+        async function getSharedGameState() {
+            let state = await dbGet("gameState");
+            if (!state || !state.mapping) {
+                const shuffled = generateDerangement([...STUDENTS]);
+                const mapping = {};
+                STUDENTS.forEach((student, idx) => {
+                    mapping[student] = shuffled[idx];
+                });
+                state = {
+                    mapping: mapping,
+                    completed: {}
+                };
+                await dbPut("gameState", state);
+            }
+            if (!state.completed) {
+                state.completed = {};
+            }
+            return state;
+        }
+
         function findStudentMatch(inputStr) {
             const clean = inputStr.trim().toLowerCase().replace(/\s+/g, ' ').replace(/’/g, "'");
             if (!clean) return null;
@@ -603,42 +645,29 @@
             return null;
         }
 
-        async function computeDigest(secret) {
-            const encoder = new TextEncoder();
-            const data = encoder.encode("7b_salt_" + secret);
-            const hashBuffer = await crypto.subtle.digest('SHA-256', data);
-            const hashArray = Array.from(new Uint8Array(hashBuffer));
-            return hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
-        }
-
-        async function getStoredAdminDigest() {
-            let saved = localStorage.getItem(STORAGE_ADMIN_HASH_KEY);
-            if (!saved) {
-                const defaultCode = ["cGh7", "jT7m", "Lcjs"].join("-");
-                saved = await computeDigest(defaultCode);
-                localStorage.setItem(STORAGE_ADMIN_HASH_KEY, saved);
-            }
-            return saved;
-        }
-
         window.addEventListener("DOMContentLoaded", async () => {
-            await getStoredAdminDigest();
             updateTestUI();
-            const state = getGameState();
-            const lockedUser = localStorage.getItem(STORAGE_DEVICE_USER_KEY);
+            try {
+                const state = await getSharedGameState();
+                const lockedUser = localStorage.getItem(STORAGE_DEVICE_USER_KEY);
 
-            if (lockedUser && STUDENTS.includes(lockedUser)) {
-                if (state.completed[lockedUser]) {
-                    showResultScreen(lockedUser, state.completed[lockedUser]);
-                } else {
-                    showSpinScreen(lockedUser);
+                if (lockedUser && STUDENTS.includes(lockedUser)) {
+                    if (state.completed[lockedUser]) {
+                        showResultScreen(lockedUser, state.completed[lockedUser]);
+                    } else {
+                        showSpinScreen(lockedUser);
+                    }
                 }
+            } catch (e) {
+                const err = document.getElementById("loginError");
+                err.textContent = "Переконайся, що у Firebase увімкнено Realtime Database у режимі Test mode.";
+                err.style.display = "block";
             }
         });
 
-        function registerUser() {
-            const input = document.getElementById("userNameInput").value;
+        async function registerUser() {
             const errorBox = document.getElementById("loginError");
+            const input = document.getElementById("userNameInput").value;
             const matchedStudent = findStudentMatch(input);
 
             if (!matchedStudent) {
@@ -647,21 +676,32 @@
                 return;
             }
 
-            const state = getGameState();
+            const btn = document.getElementById("loginBtn");
+            btn.disabled = true;
 
-            if (!isTestMode() && state.completed[matchedStudent]) {
-                errorBox.textContent = "Цей учень вже зареєстрований і зробив свій вибір! Повторна участь заборонена.";
+            try {
+                const state = await getSharedGameState();
+
+                if (!isTestMode() && state.completed[matchedStudent]) {
+                    errorBox.textContent = "Цей учень вже зареєстрований і зробив свій вибір! Повторна участь заборонена.";
+                    errorBox.style.display = "block";
+                    btn.disabled = false;
+                    return;
+                }
+
+                errorBox.style.display = "none";
+                localStorage.setItem(STORAGE_DEVICE_USER_KEY, matchedStudent);
+
+                if (isTestMode() && state.completed[matchedStudent]) {
+                    showResultScreen(matchedStudent, state.completed[matchedStudent]);
+                } else {
+                    showSpinScreen(matchedStudent);
+                }
+            } catch (e) {
+                errorBox.textContent = "Не вдалося з'єднатися з Realtime Database. Перевір, чи створено базу у проєкті lyzeum7b-santa.";
                 errorBox.style.display = "block";
-                return;
-            }
-
-            errorBox.style.display = "none";
-            localStorage.setItem(STORAGE_DEVICE_USER_KEY, matchedStudent);
-
-            if (isTestMode() && state.completed[matchedStudent]) {
-                showResultScreen(matchedStudent, state.completed[matchedStudent]);
-            } else {
-                showSpinScreen(matchedStudent);
+            } finally {
+                btn.disabled = false;
             }
         }
 
@@ -674,25 +714,31 @@
         }
 
         let isDrawing = false;
-        function performDraw() {
+        async function performDraw() {
             if (isDrawing) return;
             isDrawing = true;
 
             const lockedUser = localStorage.getItem(STORAGE_DEVICE_USER_KEY);
-            if (!lockedUser) return;
-
-            const state = getGameState();
-
-            if (!isTestMode() && state.completed[lockedUser]) {
-                showResultScreen(lockedUser, state.completed[lockedUser]);
+            if (!lockedUser) {
+                isDrawing = false;
                 return;
             }
 
-            const targetPerson = state.mapping[lockedUser];
-            state.completed[lockedUser] = targetPerson;
-            saveGameState(state);
+            try {
+                const state = await getSharedGameState();
 
-            showResultScreen(lockedUser, targetPerson);
+                if (!isTestMode() && state.completed[lockedUser]) {
+                    showResultScreen(lockedUser, state.completed[lockedUser]);
+                    return;
+                }
+
+                const targetPerson = state.mapping[lockedUser];
+                await dbPut(`gameState/completed/${encodeURIComponent(lockedUser)}`, targetPerson);
+                showResultScreen(lockedUser, targetPerson);
+            } catch (e) {
+                alert("Не вдалося зберегти вибір у спільній базі. Перевір Realtime Database у Firebase.");
+                isDrawing = false;
+            }
         }
 
         function showResultScreen(userName, targetName) {
@@ -728,6 +774,24 @@
             showSpinScreen(studentName);
         }
 
+        async function computeDigest(secret) {
+            const encoder = new TextEncoder();
+            const data = encoder.encode("7b_salt_" + secret);
+            const hashBuffer = await crypto.subtle.digest('SHA-256', data);
+            const hashArray = Array.from(new Uint8Array(hashBuffer));
+            return hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
+        }
+
+        async function getStoredAdminDigest() {
+            let saved = localStorage.getItem("class7b_admin_digest_fb_v1");
+            if (!saved) {
+                const defaultCode = ["cGh7", "jT7m", "Lcjs"].join("-");
+                saved = await computeDigest(defaultCode);
+                localStorage.setItem("class7b_admin_digest_fb_v1", saved);
+            }
+            return saved;
+        }
+
         function openAdminAuth() {
             document.getElementById("mainCard").classList.add("hidden");
             document.getElementById("adminAuthBox").classList.remove("hidden");
@@ -747,20 +811,21 @@
 
             if (enteredDigest === expectedDigest) {
                 document.getElementById("adminAuthBox").classList.add("hidden");
-                renderAdminPanel();
+                await renderAdminPanel();
                 document.getElementById("adminPanel").style.display = "block";
             } else {
                 document.getElementById("adminError").style.display = "block";
             }
         }
 
-        function renderAdminPanel() {
+        async function renderAdminPanel() {
             updateTestUI();
-            const state = getGameState();
+            const state = await getSharedGameState();
             const tbody = document.getElementById("adminTableBody");
             tbody.innerHTML = "";
 
-            const completedValues = Object.values(state.completed);
+            const completedMap = state.completed || {};
+            const completedValues = Object.values(completedMap);
             const completedCount = completedValues.length;
             const uniqueTargets = new Set(completedValues).size;
             const duplicatesCount = completedCount - uniqueTargets;
@@ -780,7 +845,7 @@
 
             STUDENTS.forEach((student, index) => {
                 const tr = document.createElement("tr");
-                const drawn = state.completed[student];
+                const drawn = completedMap[student];
 
                 tr.innerHTML = `
                     <td>${index + 1}</td>
@@ -797,9 +862,9 @@
             document.getElementById("mainCard").classList.remove("hidden");
         }
 
-        function resetAllData() {
-            if (confirm("Видалити всі тестові/поточні результати і згенерувати новий розподіл?")) {
-                localStorage.removeItem(STORAGE_STATE_KEY);
+        async function resetAllData() {
+            if (confirm("Видалити всі результати у спільній базі для всіх пристроїв і згенерувати новий розподіл?")) {
+                await dbDelete("gameState");
                 localStorage.removeItem(STORAGE_DEVICE_USER_KEY);
                 location.reload();
             }
