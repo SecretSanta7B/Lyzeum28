@@ -122,19 +122,19 @@
             margin-bottom: 8px;
         }
 
-        input[type="text"], input[type="password"] {
+        input[type="text"], input[type="password"], select {
             width: 100%;
             padding: 14px 16px;
             border-radius: 14px;
             border: 1px solid rgba(255, 255, 255, 0.2);
-            background: rgba(15, 23, 42, 0.6);
+            background: rgba(15, 23, 42, 0.85);
             color: #fff;
             font-size: 16px;
             outline: none;
             transition: border-color 0.2s, box-shadow 0.2s;
         }
 
-        input[type="text"]:focus, input[type="password"]:focus {
+        input[type="text"]:focus, input[type="password"]:focus, select:focus {
             border-color: var(--accent);
             box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.3);
         }
@@ -262,7 +262,7 @@
         .admin-panel {
             display: none;
             width: 100%;
-            max-width: 680px;
+            max-width: 780px;
             background: #0f172a;
             border: 1px solid #334155;
             border-radius: 20px;
@@ -309,7 +309,7 @@
         }
 
         .admin-table-wrap {
-            max-height: 360px;
+            max-height: 380px;
             overflow-y: auto;
             border-radius: 12px;
             border: 1px solid #1e293b;
@@ -323,7 +323,7 @@
         }
 
         th, td {
-            padding: 10px 12px;
+            padding: 10px 10px;
             text-align: left;
             border-bottom: 1px solid #1e293b;
         }
@@ -337,6 +337,13 @@
 
         .status-done { color: #34d399; font-weight: 600; }
         .status-wait { color: #64748b; }
+        .status-dup { color: #fbbf24; font-size: 11px; font-weight: 700; }
+
+        .row-btns {
+            display: flex;
+            gap: 6px;
+            flex-wrap: wrap;
+        }
 
         .admin-actions {
             display: flex;
@@ -357,15 +364,59 @@
         .btn-close { background: #334155; }
         .btn-danger { background: #dc2626; }
         .btn-warn { background: #d97706; }
-        .btn-test-row {
-            background: #4f46e5;
-            padding: 6px 10px;
+
+        .btn-mini {
+            padding: 6px 9px;
             font-size: 11px;
             border-radius: 8px;
             border: none;
             color: #fff;
             cursor: pointer;
             font-weight: 600;
+        }
+
+        .btn-test-row { background: #4f46e5; }
+        .btn-edit-row { background: #0284c7; }
+        .btn-cancel-row { background: #b91c1c; }
+
+        /* Модальне вікно зміни того, хто випав */
+        .modal-backdrop {
+            position: fixed;
+            inset: 0;
+            background: rgba(2, 6, 23, 0.8);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 20px;
+            z-index: 50;
+        }
+
+        .modal-card {
+            width: 100%;
+            max-width: 420px;
+            background: #1e293b;
+            border: 1px solid #475569;
+            border-radius: 18px;
+            padding: 22px;
+            text-align: left;
+        }
+
+        .modal-card h3 {
+            font-size: 18px;
+            margin-bottom: 6px;
+        }
+
+        .modal-card p {
+            font-size: 13px;
+            color: #cbd5e1;
+            margin-bottom: 14px;
+        }
+
+        .modal-btns {
+            display: flex;
+            gap: 10px;
+            justify-content: flex-end;
+            margin-top: 16px;
         }
 
         .hidden { display: none !important; }
@@ -446,7 +497,7 @@
         </div>
 
         <div class="test-box-admin">
-            <div style="font-size: 13px; color: #fde68a; max-width: 420px;">
+            <div style="font-size: 13px; color: #fde68a; max-width: 440px;">
                 <b>Режим тестування:</b> дозволяє заходити під будь-якими іменами на цьому пристрої без блокування, щоб перевірити розподіл.
             </div>
             <button class="btn-small btn-warn" id="toggleTestBtn" onclick="toggleTestMode()">Увімкнути тест</button>
@@ -464,9 +515,9 @@
                 <thead>
                     <tr>
                         <th>№</th>
-                        <th>Хто натискав (Учень)</th>
+                        <th>Учень</th>
                         <th>Хто випав</th>
-                        <th>Тест</th>
+                        <th>Дії організатора</th>
                     </tr>
                 </thead>
                 <tbody id="adminTableBody"></tbody>
@@ -478,8 +529,20 @@
         </div>
     </div>
 
+    <!-- МОДАЛКА ЗМІНИ ТИПАЖА / ТИМ, ХТО ВИПАВ -->
+    <div class="modal-backdrop hidden" id="editTargetModal">
+        <div class="modal-card">
+            <h3>Змінити, хто випав</h3>
+            <p id="editModalSubtitle">Обери нового учасника для учня:</p>
+            <select id="editTargetSelect"></select>
+            <div class="modal-btns">
+                <button class="btn-small btn-close" onclick="closeEditTargetModal()">Скасувати</button>
+                <button class="btn-small btn-edit-row" style="padding: 10px 16px; font-size: 13px;" onclick="saveEditedTarget()">Зберегти</button>
+            </div>
+        </div>
+    </div>
+
     <script>
-        const FIREBASE_PROJECT_URL = "https://console.firebase.google.com/project/lyzeum7b-santa/overview";
         const CANDIDATE_DB_URLS = [
             "https://lyzeum7b-santa-default-rtdb.firebaseio.com",
             "https://lyzeum7b-santa-default-rtdb.europe-west1.firebasedatabase.app"
@@ -525,6 +588,7 @@
 
         const STORAGE_DEVICE_USER_KEY = "class7b_device_locked_user_fb_v1";
         const STORAGE_TEST_MODE_KEY = "class7b_admin_test_mode_fb_v1";
+        let editingStudentName = null;
 
         function buildEndpoint(baseUrl, path) {
             return `${baseUrl.replace(/\/+$/, "")}/${path}.json`;
@@ -774,6 +838,64 @@
             showSpinScreen(studentName);
         }
 
+        // Анулювати спробу конкретного учня у спільній базі
+        async function cancelStudentAttempt(studentName) {
+            if (!confirm(`Анулювати спробу для «${studentName}»? Учень зможе пройти вибір заново.`)) {
+                return;
+            }
+            try {
+                await dbDelete(`gameState/completed/${encodeURIComponent(studentName)}`);
+                if (localStorage.getItem(STORAGE_DEVICE_USER_KEY) === studentName) {
+                    localStorage.removeItem(STORAGE_DEVICE_USER_KEY);
+                }
+                await renderAdminPanel();
+            } catch (e) {
+                alert("Не вдалося анулювати спробу в базі.");
+            }
+        }
+
+        // Відкрити вікно зміни того, хто випав учню
+        async function openEditTargetModal(studentName) {
+            editingStudentName = studentName;
+            const state = await getSharedGameState();
+            const currentTarget = (state.completed && state.completed[studentName]) || state.mapping[studentName];
+
+            const select = document.getElementById("editTargetSelect");
+            select.innerHTML = "";
+            STUDENTS.forEach(candidate => {
+                if (candidate === studentName) return;
+                const opt = document.createElement("option");
+                opt.value = candidate;
+                opt.textContent = candidate;
+                if (candidate === currentTarget) opt.selected = true;
+                select.appendChild(opt);
+            });
+
+            document.getElementById("editModalSubtitle").textContent = `Кому має випасти для «${studentName}»:`;
+            document.getElementById("editTargetModal").classList.remove("hidden");
+        }
+
+        function closeEditTargetModal() {
+            editingStudentName = null;
+            document.getElementById("editTargetModal").classList.add("hidden");
+        }
+
+        async function saveEditedTarget() {
+            if (!editingStudentName) return;
+            const newTarget = document.getElementById("editTargetSelect").value;
+            try {
+                const state = await getSharedGameState();
+                await dbPut(`gameState/mapping/${encodeURIComponent(editingStudentName)}`, newTarget);
+                if (state.completed && state.completed[editingStudentName]) {
+                    await dbPut(`gameState/completed/${encodeURIComponent(editingStudentName)}`, newTarget);
+                }
+                closeEditTargetModal();
+                await renderAdminPanel();
+            } catch (e) {
+                alert("Не вдалося зберегти зміну в базі.");
+            }
+        }
+
         async function computeDigest(secret) {
             const encoder = new TextEncoder();
             const data = encoder.encode("7b_salt_" + secret);
@@ -827,8 +949,13 @@
             const completedMap = state.completed || {};
             const completedValues = Object.values(completedMap);
             const completedCount = completedValues.length;
-            const uniqueTargets = new Set(completedValues).size;
-            const duplicatesCount = completedCount - uniqueTargets;
+
+            // Підрахунок повторів серед уже випалих осіб
+            const freq = {};
+            completedValues.forEach(name => {
+                freq[name] = (freq[name] || 0) + 1;
+            });
+            const duplicatesCount = Object.values(freq).filter(count => count > 1).length;
 
             document.getElementById("statTotal").textContent = STUDENTS.length;
             document.getElementById("statDone").textContent = completedCount;
@@ -839,19 +966,35 @@
                 dupEl.textContent = "0 (Повторів немає)";
                 dupEl.style.color = "#34d399";
             } else {
-                dupEl.textContent = duplicatesCount + " (!)";
-                dupEl.style.color = "#ef4444";
+                dupEl.textContent = duplicatesCount + " (Є повтор)";
+                dupEl.style.color = "#fbbf24";
             }
 
             STUDENTS.forEach((student, index) => {
                 const tr = document.createElement("tr");
                 const drawn = completedMap[student];
+                const isDup = drawn && freq[drawn] > 1;
+                const escaped = student.replace(/'/g, "\\'");
+
+                const targetCellHtml = drawn
+                    ? `<span class="status-done">${drawn}</span>${isDup ? ` <span class="status-dup">(повтор)</span>` : ""}`
+                    : `<span class="status-wait">Ще не натискав(ла)</span>`;
+
+                const cancelBtnHtml = drawn
+                    ? `<button class="btn-mini btn-cancel-row" onclick="cancelStudentAttempt('${escaped}')">Анулювати</button>`
+                    : "";
 
                 tr.innerHTML = `
                     <td>${index + 1}</td>
                     <td><b>${student}</b></td>
-                    <td>${drawn ? `<span class="status-done">${drawn}</span>` : `<span class="status-wait">Ще не натискав(ла)</span>`}</td>
-                    <td><button class="btn-test-row" onclick="quickTestAsStudent('${student.replace(/'/g, "\\'")}')">Зімітувати</button></td>
+                    <td>${targetCellHtml}</td>
+                    <td>
+                        <div class="row-btns">
+                            <button class="btn-mini btn-edit-row" onclick="openEditTargetModal('${escaped}')">Змінити</button>
+                            ${cancelBtnHtml}
+                            <button class="btn-mini btn-test-row" onclick="quickTestAsStudent('${escaped}')">Тест</button>
+                        </div>
+                    </td>
                 `;
                 tbody.appendChild(tr);
             });
